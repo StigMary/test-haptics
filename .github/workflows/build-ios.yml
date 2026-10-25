@@ -1,4 +1,4 @@
-name: Build iOS IPA
+name: Build Unsigned iOS IPA
 
 on:
   workflow_dispatch:
@@ -13,17 +13,42 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          cache: ''
+          node-version: 20
 
       - name: Install dependencies
         run: npm install
 
-      - name: Setup EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Generate native iOS project (Expo Prebuild)
+        run: npx expo prebuild --platform ios --no-install
 
-      - name: Build local IPA on macOS runner
-        run: npx eas build --platform ios --profile development --local --non-interactive
+      - name: Install CocoaPods
+        working-directory: ios
+        run: pod install
+
+      - name: Build unsigned .app via Xcode
+        working-directory: ios
+        run: |
+          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
+          SCHEME=${WORKSPACE%.xcworkspace}
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package .app into .ipa
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
+          cp -r "$APP_PATH" Payload/
+          zip -r -q unsigned-app.ipa Payload
+
+      - name: Upload IPA to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ready-IPA-for-Sideloadly
+          path: ios/unsigned-app.ipa
